@@ -7,7 +7,7 @@ st.title("船舶燃油效率儀表板")
 
 
 # 讀取 CSV 檔案
-file_path = "ship_fuel_efficiency (1).csv"
+file_path = "ship_fuel_efficiency.csv"
 df = pd.read_csv(file_path)
 
 
