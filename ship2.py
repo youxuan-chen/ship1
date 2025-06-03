@@ -1,116 +1,124 @@
-﻿# -*- coding: utf-8 -*-
-import streamlit as st
+﻿import streamlit as st
 import pandas as pd
 import plotly.express as px
-import seaborn as sns
-import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 
 
-st.title("船舶燃油效率分析儀表板")
-st.success('分析環境載入成功 ✅')
-st.info("請使用側邊欄進行篩選與互動分析", icon='ℹ')
+# 1. 標題與資料載入
+st.title("船舶燃油效率分析系統")
 
 
-# 載入資料
-df = pd.read_csv("ship_fuel_efficiency.csv")
+file_path = "ship_fuel_efficiency.csv"  # 請確認與 .py 同目錄或改為正確路徑
+df = pd.read_csv(file_path)
 
 
-st.header("原始資料預覽")
-st.dataframe(df.head(50))
+# 修正月份欄位轉換
+month_map = {
+    'January': 1, 'February': 2, 'March': 3, 'April': 4,
+    'May': 5, 'June': 6, 'July': 7, 'August': 8,
+    'September': 9, 'October': 10, 'November': 11, 'December': 12
+}
+df["month_num"] = df["month"].map(month_map)
 
 
-st.sidebar.header("🔎 資料篩選器")
-if 'engine_efficiency' in df.columns:
-    eff_min, eff_max = float(df['engine_efficiency'].min()), float(df['engine_efficiency'].max())
-    eff_range = st.sidebar.slider("效率範圍 (Engine Efficiency)", eff_min, eff_max, (eff_min, eff_max))
-else:
-    eff_range = None
+st.success("✅ 資料載入成功！")
+st.info("請使用左側選單進行篩選")
 
 
-ship_type = st.sidebar.selectbox("船型 (Ship Type)", ["All"] + sorted(df['ship_type'].dropna().unique())) if 'ship_type' in df.columns else "All"
-fuel_type = st.sidebar.selectbox("燃料種類 (Fuel Type)", ["All"] + sorted(df['fuel_type'].dropna().unique())) if 'fuel_type' in df.columns else "All"
+# 2. 側邊欄篩選器
+st.sidebar.header("🔎 篩選條件")
+
+
+ship_type = st.sidebar.selectbox("船舶類型", ["All"] + df["ship_type"].unique().tolist())
+fuel_type = st.sidebar.selectbox("燃料種類", ["All"] + df["fuel_type"].unique().tolist())
+month_range = st.sidebar.slider("月份範圍 (1-12)", 1, 12, (1, 12))
 
 
 # 資料篩選
 filtered_df = df.copy()
-if eff_range:
-    filtered_df = filtered_df[(filtered_df['engine_efficiency'] >= eff_range[0]) & (filtered_df['engine_efficiency'] <= eff_range[1])]
 if ship_type != "All":
-    filtered_df = filtered_df[filtered_df['ship_type'] == ship_type]
+    filtered_df = filtered_df[filtered_df["ship_type"] == ship_type]
 if fuel_type != "All":
-    filtered_df = filtered_df[filtered_df['fuel_type'] == fuel_type]
+    filtered_df = filtered_df[filtered_df["fuel_type"] == fuel_type]
 
 
-st.subheader("篩選後的資料")
+filtered_df = filtered_df[
+    (filtered_df["month_num"] >= month_range[0]) &
+    (filtered_df["month_num"] <= month_range[1])
+]
+
+
+st.subheader("📄 篩選後資料")
 st.dataframe(filtered_df)
 
 
-st.header("統計摘要")
+# 3. 描述統計
+st.header("📊 統計摘要")
 st.write(filtered_df.describe())
 
 
-st.header("欄位相關係數 Heatmap")
-if set(['distance', 'fuel_consumption', 'engine_efficiency']).issubset(filtered_df.columns):
-    corr_df = filtered_df[['distance', 'fuel_consumption', 'engine_efficiency']].dropna()
-    fig_corr, ax = plt.subplots()
-    sns.heatmap(corr_df.corr(), annot=True, cmap='coolwarm', ax=ax)
-    st.pyplot(fig_corr)
-
-
-st.header("互動式圖表分析")
-tab1, tab2 = st.tabs(["📦 箱型圖", "⚫ 散佈圖"])
+# 4. 圖表視覺化
+st.header("📈 圖表分析")
+tab1, tab2, tab3 = st.tabs(["箱型圖", "散佈圖", "直方圖"])
 
 
 with tab1:
-    if 'fuel_type' in filtered_df.columns and 'engine_efficiency' in filtered_df.columns:
-        fig1 = px.box(filtered_df, x="fuel_type", y="engine_efficiency", title="燃料種類與效率的箱型圖")
-        st.plotly_chart(fig1)
+    st.plotly_chart(px.box(filtered_df, y="fuel_consumption", title="燃料消耗 Box Plot"))
 
 
 with tab2:
-    if 'distance' in filtered_df.columns and 'engine_efficiency' in filtered_df.columns:
-        fig2 = px.scatter(filtered_df, x="distance", y="engine_efficiency", color="ship_type" if 'ship_type' in filtered_df.columns else None, title="航程與效率的關係")
-        st.plotly_chart(fig2)
+    st.plotly_chart(px.scatter(filtered_df, x="engine_efficiency", y="CO2_emissions",
+                               color="fuel_type", title="引擎效率 vs CO2 排放"))
 
 
-st.header("🎯 標準化後的線性迴歸模型：預測效率")
+with tab3:
+    st.plotly_chart(px.histogram(filtered_df, x="CO2_emissions", nbins=30, title="CO2 排放分布"))
 
 
-if set(["distance", "fuel_consumption", "engine_efficiency"]).issubset(filtered_df.columns):
-    model_df = filtered_df[["distance", "fuel_consumption", "engine_efficiency"]].dropna()
-    X = model_df[["distance", "fuel_consumption"]]
-    y = model_df["engine_efficiency"]
+# 5. 線性迴歸模型
+st.header("🎯 線性迴歸模型：預測 CO2 排放量")
 
 
-    # 資料標準化
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+model_df = filtered_df[["distance", "fuel_consumption", "engine_efficiency", "CO2_emissions"]].dropna()
 
 
-    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+if model_df.shape[0] >= 20:  # 避免資料太少導致模型錯誤
+    X = model_df[["distance", "fuel_consumption", "engine_efficiency"]]
+    y = model_df["CO2_emissions"]
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+
     model = LinearRegression()
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
     score = model.score(X_test, y_test)
 
 
-    st.write(f"模型準確度 R²：{score:.2f}")
+    st.write(f"📈 模型準確度 R²：{score:.2f}")
 
 
-    fig_pred = px.scatter(x=y_test, y=y_pred, labels={'x': '實際效率', 'y': '預測效率'}, title="實際 vs 預測 效率")
-    fig_pred.add_shape(type='line', x0=y_test.min(), y0=y_test.min(), x1=y_test.max(), y1=y_test.max(), line=dict(color='red', dash='dash'))
+    # 實際 vs 預測圖
+    fig_pred = px.scatter(x=y_test, y=y_pred, labels={'x': '實際值', 'y': '預測值'},
+                          title="實際 vs 預測 CO2 排放量")
+    fig_pred.add_shape(
+        type='line', x0=y_test.min(), y0=y_test.min(), x1=y_test.max(), y1=y_test.max(),
+        line=dict(color='red', dash='dash')
+    )
     st.plotly_chart(fig_pred)
 
 
-    st.subheader("🔍 使用者輸入預測效率")
-    input_distance = st.number_input("輸入航程距離 (distance)", min_value=0.0, value=100.0)
-    input_fc = st.number_input("輸入燃料消耗 (fuel_consumption)", min_value=0.0, value=1000.0)
+    # 6. 使用者輸入預測
+    st.subheader("🔍 輸入數值預測 CO2 排放")
+    input_dist = st.number_input("航行距離 (km)", min_value=0.0, value=500.0)
+    input_fuel = st.number_input("燃料消耗 (公升)", min_value=0.0, value=100.0)
+    input_eff = st.number_input("引擎效率", min_value=0.0, value=0.9)
 
 
-    if st.button("預測效率"):
-        input_scaled = scaler.transform([[input_distance, input_fc]])
-        prediction = model.predict(input_scaled)[0]
-        st.success(f"🌟 預測燃油效率為：{prediction:.2f}")
+    if st.button("立即預測"):
+        user_input = pd.DataFrame([[input_dist, input_fuel, input_eff]],
+                                  columns=["distance", "fuel_consumption", "engine_efficiency"])
+        co2_pred = model.predict(user_input)[0]
+        st.success(f"🌍 預測 CO2 排放量為：{co2_pred:.2f}")
+else:
+    st.warning("⚠ 篩選後資料不足，無法建立可靠模型，請調整條件。")
